@@ -12,12 +12,11 @@
 #include <string.h>
 
 #include "libs/buffer.h"
-#include "libs/crypto/sha3.h"
 #include "libs/crypto/salsa20.h"
 #include "libs/crypto/micro-ecc/uECC.h"
 #include "libs/memory.h"
 #include "libs/types.h"
-
+#include "libs/crypto/SHA3IUF/sha3.h"
 #include "encryptor.h"
 #include "encryptor_sas_dict.h"
 
@@ -28,25 +27,25 @@
 
 static void make_key(encryptor_t *encryptor, char *key_name, uint8_t *result)
 {
-  sha3_ctx ctx;
+  sha3_context ctx;
 
-  sha3_256_init(&ctx);
-  sha3_update(&ctx, encryptor->shared_secret, 32);
-  sha3_update(&ctx, (uint8_t*)key_name, strlen(key_name));
-  sha3_final(&ctx, result);
+  sha3_Init256(&ctx);
+  sha3_Update(&ctx, encryptor->shared_secret, 32);
+  sha3_Update(&ctx, (uint8_t*)key_name, strlen(key_name));
+  memcpy(result, sha3_Finalize(&ctx), 32);
 }
 
 static void make_authenticator(encryptor_t *encryptor, char *authstring, uint8_t *buffer)
 {
-  sha3_ctx ctx;
+  sha3_context ctx;
 
-  sha3_256_init(&ctx);
-  sha3_update(&ctx, (uint8_t*)authstring, strlen(authstring));
-  sha3_update(&ctx, encryptor->shared_secret,    32);
-  sha3_update(&ctx, encryptor->my_public_key,    64);
-  sha3_update(&ctx, encryptor->their_public_key, 64);
-  sha3_update(&ctx, (uint8_t*)encryptor->preshared_secret, strlen(encryptor->preshared_secret));
-  sha3_final(&ctx, buffer);
+  sha3_Init256(&ctx);
+  sha3_Update(&ctx, (uint8_t*)authstring, strlen(authstring));
+  sha3_Update(&ctx, encryptor->shared_secret,    32);
+  sha3_Update(&ctx, encryptor->my_public_key,    64);
+  sha3_Update(&ctx, encryptor->their_public_key, 64);
+  sha3_Update(&ctx, (uint8_t*)encryptor->preshared_secret, strlen(encryptor->preshared_secret));
+  memcpy(buffer, sha3_Finalize(&ctx), 32);
 }
 
 encryptor_t *encryptor_create(char *preshared_secret)
@@ -114,16 +113,16 @@ void encryptor_print(encryptor_t *encryptor)
 
 void encryptor_print_sas(encryptor_t *encryptor)
 {
-  sha3_ctx ctx;
-  uint8_t  hash[32];
+  sha3_context ctx;
+  uint8_t  *hash;
   size_t   i;
 
-  sha3_256_init(&ctx);
-  sha3_update(&ctx, (uint8_t*)SAS_AUTHSTRING, strlen(SAS_AUTHSTRING));
-  sha3_update(&ctx, encryptor->shared_secret,    32);
-  sha3_update(&ctx, encryptor->my_public_key,    64);
-  sha3_update(&ctx, encryptor->their_public_key, 64);
-  sha3_final(&ctx, hash);
+  sha3_Init256(&ctx);
+  sha3_Update(&ctx, (uint8_t*)SAS_AUTHSTRING, strlen(SAS_AUTHSTRING));
+  sha3_Update(&ctx, encryptor->shared_secret,    32);
+  sha3_Update(&ctx, encryptor->my_public_key,    64);
+  sha3_Update(&ctx, encryptor->their_public_key, 64);
+  hash = sha3_Finalize(&ctx);
 
   for(i = 0; i < 6; i++)
     printf("%s ", sas_dict[hash[i]]);
@@ -132,11 +131,11 @@ void encryptor_print_sas(encryptor_t *encryptor)
 
 NBBOOL encryptor_check_signature(encryptor_t *encryptor, buffer_t *buffer)
 {
-  sha3_ctx  ctx;
+  sha3_context  ctx;
 
   uint8_t   header[HEADER_LENGTH];
   uint8_t   their_signature[SIGNATURE_LENGTH];
-  uint8_t   good_signature[32];
+  uint8_t   *good_signature;
   uint8_t  *body;
   size_t    body_length;
 
@@ -164,10 +163,10 @@ NBBOOL encryptor_check_signature(encryptor_t *encryptor, buffer_t *buffer)
   signed_data = buffer_create_string(buffer, &signed_length);
 
   /* Calculate H(mac_key || data) */
-  sha3_256_init(&ctx);
-  sha3_update(&ctx, encryptor->their_mac_key, 32);
-  sha3_update(&ctx, signed_data, signed_length);
-  sha3_final(&ctx, good_signature);
+  sha3_Init256(&ctx);
+  sha3_Update(&ctx, encryptor->their_mac_key, 32);
+  sha3_Update(&ctx, signed_data, signed_length);
+  good_signature=sha3_Finalize(&ctx);
 
   /* Free the data we allocated. */
   safe_free(signed_data);
@@ -215,8 +214,8 @@ void encryptor_decrypt_buffer(encryptor_t *encryptor, buffer_t *buffer, uint16_t
 
 void encryptor_sign_buffer(encryptor_t *encryptor, buffer_t *buffer)
 {
-  sha3_ctx  ctx;
-  uint8_t   signature[32];
+  sha3_context  ctx;
+  uint8_t   *signature;
 
   uint8_t   header[HEADER_LENGTH]   = {0};
   uint8_t  *body                    = NULL;
@@ -232,11 +231,12 @@ void encryptor_sign_buffer(encryptor_t *encryptor, buffer_t *buffer)
   body = buffer_read_remaining_bytes(buffer, &body_length, -1, FALSE);
 
   /* Generate the signature.  */
-  sha3_256_init(&ctx);
-  sha3_update(&ctx, encryptor->my_mac_key, 32);
-  sha3_update(&ctx, header,                HEADER_LENGTH);
-  sha3_update(&ctx, body,                  body_length);
-  sha3_final(&ctx, signature);
+  sha3_Init256(&ctx);
+  sha3_Update(&ctx, encryptor->my_mac_key, 32);
+  sha3_Update(&ctx, header,                HEADER_LENGTH);
+  sha3_Update(&ctx, body,                  body_length);
+  signature=malloc(32);
+  memcpy(signature, sha3_Finalize(&ctx), 32);
 
   /* Add the truncated signature to the packet. */
   buffer_clear(buffer);

@@ -1,0 +1,3 @@
+[submodule "client/libs/SHA3IUF"]
+	path = client/libs/crypto/SHA3IUF
+	url = https://github.com/truekonrads/SHA3IUF
